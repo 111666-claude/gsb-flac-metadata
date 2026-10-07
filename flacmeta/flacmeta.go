@@ -31,7 +31,7 @@ type Meta struct {
 }
 
 func readBE24(b []byte) int {
-	return int(b[0]) | int(b[1])<<8 | int(b[2])<<16
+	return int(b[0])<<16 | int(b[1])<<8 | int(b[2])
 }
 
 // Parse 解析整条元数据链。
@@ -53,12 +53,28 @@ func Parse(data []byte, c *Counter) (*Meta, error) {
 		block := Block{Type: int(head & 0x7f), Last: head&0x80 != 0, Declared: declared,
 			Data: append([]byte(nil), data[start:start+length]...)}
 		meta.Blocks = append(meta.Blocks, block)
-		if block.Type == 4 {
+		switch block.Type {
+		case 0:
+			parseStreamInfo(meta, block.Data)
+		case 4:
 			parseComment(meta, block.Data)
+		}
+		if block.Last {
+			break
 		}
 		pos = start + length
 	}
 	return meta, nil
+}
+
+func parseStreamInfo(meta *Meta, data []byte) {
+	if len(data) < 18 {
+		return
+	}
+	meta.SampleRate = int(data[10])<<12 | int(data[11])<<4 | int(data[12])>>4
+	meta.Channels = int(data[12]>>1&0x07) + 1
+	meta.BitsPerSmpl = (int(data[12]&0x01)<<4 | int(data[13])>>4) + 1
+	meta.TotalSamples = int(data[13]&0x0f)<<32 | int(data[14])<<24 | int(data[15])<<16 | int(data[16])<<8 | int(data[17])
 }
 
 func parseComment(meta *Meta, data []byte) {
@@ -88,18 +104,14 @@ func parseComment(meta *Meta, data []byte) {
 		data = data[clen:]
 		key, value, ok := strings.Cut(entry, "=")
 		if ok {
-			meta.Comments[key] = value
+			meta.Comments[strings.ToUpper(key)] = value
 		}
 	}
 }
 
 // Comment 按注释键取值。
 func (m *Meta) Comment(key string, c *Counter) (string, bool) {
-	for k, v := range m.Comments {
-		c.Scanned++
-		if k == key {
-			return v, true
-		}
-	}
-	return "", false
+	c.Scanned++
+	v, ok := m.Comments[strings.ToUpper(key)]
+	return v, ok
 }
